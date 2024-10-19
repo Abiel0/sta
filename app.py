@@ -1,28 +1,9 @@
-import logging
-from flask import Flask, request, send_from_directory, jsonify
-from flask_cors import CORS
-from gradio_client import Client, file
-import os
 import tempfile
-import base64
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+import os
+from flask import Flask, request, send_file, jsonify
+from gradio_client import Client
 
 app = Flask(__name__)
-CORS(app)  # This will enable CORS for all routes
-
-# Get the directory of the current script
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-@app.route('/')
-def serve_html():
-    return send_from_directory(current_dir, 'index.html')
-
-@app.route('/generated_audio.wav')
-def serve_audio():
-    return send_from_directory(current_dir, 'generated_audio.wav')
 
 @app.route('/generate-audio', methods=['POST'])
 def generate_audio():
@@ -32,39 +13,34 @@ def generate_audio():
     text = data.get('text', '')
     ref_audio_base64 = data.get('refAudio', '')
 
-    logger.debug(f"Received request: text={text}, ref_audio_length={len(ref_audio_base64)}")
-
     try:
-        # Save the base64 audio to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
-            temp_audio.write(base64.b64decode(ref_audio_base64))
-            temp_audio_path = temp_audio.name
+        # Create a temporary directory for our files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Save the reference audio to a temporary file
+            temp_audio_path = os.path.join(temp_dir, 'ref_audio.wav')
+            with open(temp_audio_path, 'wb') as f:
+                f.write(base64.b64decode(ref_audio_base64))
 
-        result = client.predict(
-            text=text,
-            audio=file(temp_audio_path),
-            api_name="/predict"
-        )
-        logger.debug(f"Gradio client result: {result}")
+            # Generate the audio
+            result = client.predict(
+                text=text,
+                audio=temp_audio_path,
+                api_name="/predict"
+            )
 
-        if isinstance(result, str) and os.path.exists(result):
-            new_file_path = os.path.join(current_dir, "generated_audio.wav")
-            os.replace(result, new_file_path)
-            logger.info(f"Audio generated successfully: {new_file_path}")
-            return jsonify({"success": True, "file": "generated_audio.wav"})
-        else:
-            error_msg = "Unexpected result format from API or file not found"
-            logger.error(error_msg)
-            return jsonify({"success": False, "error": error_msg})
+            # If the result is a file path, it's likely on a different file system
+            # So we need to copy it to our temporary directory
+            if isinstance(result, str) and os.path.exists(result):
+                output_path = os.path.join(temp_dir, 'generated_audio.wav')
+                shutil.copy(result, output_path)
+            else:
+                return jsonify({"success": False, "error": "Unexpected result format from API"})
+
+            # Send the file directly from the temporary directory
+            return send_file(output_path, as_attachment=True, download_name='generated_audio.wav')
 
     except Exception as e:
-        error_msg = f"Gradio client error: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return jsonify({"success": False, "error": error_msg})
-    finally:
-        # Clean up the temporary file
-        if 'temp_audio_path' in locals():
-            os.unlink(temp_audio_path)
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
