@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Clone Generator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #f5a623;
+            --background-color: #f0f4f8;
+            --text-color: #333;
+            --error-color: #e74c3c;
+        }
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        h1 {
+            text-align: center;
+            color: var(--primary-color);
+            margin-bottom: 2rem;
+        }
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+        }
+        input[type="file"], textarea {
+            width: 100%;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        textarea {
+            min-height: 100px;
+        }
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #3a7bc8;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        #recordingControls button {
+            flex: 1;
+        }
+        #result {
+            margin-top: 2rem;
+        }
+        .error {
+            color: var(--error-color);
+            font-weight: bold;
+        }
+        #recordedAudio, #generatedAudio {
+            margin-top: 1rem;
+        }
+        audio {
+            width: 100%;
+        }
+        #downloadButton {
+            background-color: var(--secondary-color);
+            display: none;
+            margin-top: 1rem;
+        }
+        #downloadButton:hover {
+            background-color: #e09612;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background-color: #ddd;
+            margin-top: 1rem;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress {
+            width: 0%;
+            height: 100%;
+            background-color: var(--primary-color);
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice Clone Generator</h1>
+        <form id="voiceCloneForm">
+            <div class="card">
+                <label for="refAudio">Reference Audio:</label>
+                <input type="file" id="refAudio" accept="audio/*">
+                
+                <div id="recordingControls" class="button-group">
+                    <button type="button" id="startRecord">Start Recording</button>
+                    <button type="button" id="stopRecord" disabled>Stop Recording</button>
+                </div>
+                <div id="recordedAudio"></div>
+            </div>
+            
+            <div class="card">
+                <label for="text">Text to Generate:</label>
+                <textarea id="text" required></textarea>
+                
+                <button type="submit">Generate Audio</button>
+            </div>
+        </form>
+        <div id="result" class="card">
+            <h2>Generated Audio</h2>
+            <div id="generatedAudio"></div>
+            <div class="progress-bar">
+                <div class="progress"></div>
+            </div>
+            <button id="downloadButton">Download Generated Audio</button>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let recordedAudioBlob;
+
+        const startRecordButton = document.getElementById('startRecord');
+        const stopRecordButton = document.getElementById('stopRecord');
+        const downloadButton = document.getElementById('downloadButton');
+        const progressBar = document.querySelector('.progress');
+
+        startRecordButton.addEventListener('click', startRecording);
+        stopRecordButton.addEventListener('click', stopRecording);
+        downloadButton.addEventListener('click', downloadGeneratedAudio);
+
+        async function startRecording() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                recordedAudioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(recordedAudioBlob);
+                document.getElementById('recordedAudio').innerHTML = `
+                    <audio controls src="${audioUrl}"></audio>
+                `;
+                document.getElementById('refAudio').value = '';
+            };
+
+            mediaRecorder.start();
+            startRecordButton.disabled = true;
+            stopRecordButton.disabled = false;
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            startRecordButton.disabled = false;
+            stopRecordButton.disabled = true;
+        }
+
+        document.getElementById('voiceCloneForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const resultDiv = document.getElementById('generatedAudio');
+            resultDiv.innerHTML = '<p>Generating audio, please wait...</p>';
+            progressBar.style.width = '0%';
+            
+            let audioData;
+            if (recordedAudioBlob) {
+                audioData = await blobToBase64(recordedAudioBlob);
+            } else if (document.getElementById('refAudio').files[0]) {
+                audioData = await fileToBase64(document.getElementById('refAudio').files[0]);
+            } else {
+                resultDiv.innerHTML = '<p class="error">Please provide a reference audio (either record or upload).</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch('/generate-audio', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        refAudio: audioData,
+                        text: document.getElementById('text').value
+                    }),
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <p>Audio generated successfully!</p>
+                        <audio controls src="/generated_audio.wav"></audio>
+                    `;
+                    downloadButton.style.display = 'block';
+                    animateProgressBar();
+                } else {
+                    resultDiv.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                    downloadButton.style.display = 'none';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">Network Error: ${error.message}</p>`;
+                downloadButton.style.display = 'none';
+            }
+        });
+
+        async function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        async function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        function downloadGeneratedAudio() {
+            fetch('/generated_audio.wav')
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'generated_audio.wav';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(error => console.error('Download failed:', error));
+        }
+
+        function animateProgressBar() {
+            let width = 0;
+            const interval = setInterval(() => {
+                if (width >= 100) {
+                    clearInterval(interval);
+                } else {
+                    width += 1;
+                    progressBar.style.width = width + '%';
+                }
+            }, 10);
+        }
+    </script>
+</body>
+</html>
